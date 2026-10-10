@@ -5,7 +5,7 @@ dist/
 
 # ── 敏感文件：绝不可提交 ──────────────────────────────────────
 # data.sql 含学校统一身份认证密码、QQ邮箱SMTP授权码、Server酱 SendKey
-# data.sql 已从版本控制移除：含真实凭据，见 .gitignore
+data.sql
 *.sql.bak
 .env
 .env.*
@@ -13,4 +13,3 @@ dist/
 
 # 调试截图
 *.png
-!docs/**/*.png
