@@ -107,7 +107,7 @@ APP_SECRET=<用 openssl rand -base64 32 生成>
 
 # 共用课表站会话：填课表站的 APP_SECRET，用于验签它签发的 JWT
 SSO_SECRET=<课表站的 APP_SECRET>
-ADMIN_STUDENT_IDS=251650330   # 这些学号登录后自动成为管理员（逗号分隔）
+ADMIN_STUDENT_IDS=2025000001  # 这些学号登录后自动成为管理员（逗号分隔）
 ```
 
 > `APP_SECRET` 与 `SSO_SECRET` 是两把不同的密钥，用途也不同：
