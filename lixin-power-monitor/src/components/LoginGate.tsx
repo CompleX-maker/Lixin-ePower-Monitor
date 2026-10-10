@@ -4,8 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Zap, LogIn, ShieldCheck, UserRound, ExternalLink, CheckCircle2 } from "lucide-react";
 
-/** 课表站地址：登录入口在那里 */
-const SCHEDULE_URL = "https://stellaura.tech";
+/** 本页地址：登录后跳回这里 */
+const SELF_URL = "https://epower.stellaura.tech";
+
+/**
+ * 课表站登录地址。
+ * 带 redirect 参数，课表站登录成功（或本来就已登录）会自动跳回本页，
+ * 无需用户手动返回，也不再依赖跨子域 cookie 是否已就绪。
+ */
+const SCHEDULE_URL = `https://stellaura.tech/?redirect=${encodeURIComponent(SELF_URL)}`;
 
 /**
  * 登录门禁
@@ -20,6 +27,8 @@ const SCHEDULE_URL = "https://stellaura.tech";
 export function LoginGate({ children }: { children: ReactNode }) {
   // 点了「去登录」之后才开始轮询，平时不打扰后端
   const [waiting, setWaiting] = useState(false);
+  // 点了「立即刷新」但仍是未登录 —— 用于给出更明确的排查提示
+  const [checkedNoResult, setCheckedNoResult] = useState(false);
 
   const me = trpc.me.useQuery(undefined, {
     retry: false,
@@ -109,12 +118,27 @@ export function LoginGate({ children }: { children: ReactNode }) {
             )}
 
             <button
-              className="flex w-full items-center justify-center gap-1 text-center text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              onClick={() => void me.refetch()}
+              className="flex w-full items-center justify-center gap-1 text-center text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+              disabled={me.isFetching}
+              onClick={async () => {
+                const r = await me.refetch();
+                if (!r.data?.loggedIn) {
+                  // 明确告诉用户「刷新了但还不行」，而不是默默无反应
+                  setCheckedNoResult(true);
+                }
+              }}
             >
-              <CheckCircle2 className="h-3 w-3" />
-              我已登录，立即刷新
+              <CheckCircle2 className={`h-3 w-3 ${me.isFetching ? "animate-spin" : ""}`} />
+              {me.isFetching ? "检查中…" : "我已登录，立即刷新"}
             </button>
+
+            {checkedNoResult && (
+              <p className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-500">
+                还是没检测到登录。多半是浏览器里存着旧版会话（不含跨域属性）。
+                请点上面的按钮去课表站<strong>重新登录一次</strong>，
+                登录后会自动跳回本页。
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
