@@ -1,6 +1,8 @@
 import { createRouter, publicQuery } from "./middleware";
 import { monitorRouter } from "./monitorRouter";
 import { recordVisit } from "./queries/visits";
+import { serialize } from "hono/utils/cookie";
+import { SSO_COOKIE, sessionCookieOptions } from "./lib/cookies";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -24,6 +26,32 @@ export const appRouter = createRouter({
       name: ctx.studentName,
       isAdmin: ctx.isAdmin,
     };
+  }),
+
+  /**
+   * 退出登录。
+   *
+   * 本站没有自己的会话，身份存在课表站签发的共享 cookie 里
+   * （Domain=.stellaura.tech），所以这里是把那个 cookie 删掉 ——
+   * **课表站会一并退出**，前端需要如实告诉用户。
+   *
+   * 用 publicQuery 而不是 authedQuery：即便 cookie 已经失效/过期，
+   * 也应该能正常走完退出流程，不该报 401。
+   */
+  logout: publicQuery.mutation(({ ctx }) => {
+    const opts = sessionCookieOptions(ctx.req.headers);
+    ctx.resHeaders.append(
+      "set-cookie",
+      serialize(SSO_COOKIE, "", {
+        httpOnly: opts.httpOnly,
+        path: opts.path,
+        sameSite: opts.sameSite?.toLowerCase() as "lax" | "none",
+        secure: opts.secure,
+        maxAge: 0, // 立刻过期 = 删除
+        ...(opts.domain ? { domain: opts.domain } : {}),
+      }),
+    );
+    return { ok: true as const };
   }),
 
   monitor: monitorRouter,

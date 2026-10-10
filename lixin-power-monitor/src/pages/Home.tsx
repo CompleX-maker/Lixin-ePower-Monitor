@@ -25,6 +25,7 @@ import {
 import VisitStatsPanel from "@/components/VisitStatsPanel";
 import MyMailCard from "@/components/MyMailCard";
 import Footer from "@/components/Footer";
+import LogoutButton from "@/components/LogoutButton";
 import AdminPreviewToggle, { useIsAdmin } from "@/components/AdminPreviewToggle";
 
 const TZ = "Asia/Shanghai";
@@ -170,6 +171,7 @@ export default function Home() {
               <RefreshCw className={`mr-1 h-3.5 w-3.5 ${refresh.isPending ? "animate-spin" : ""}`} />
               刷新
             </Button>
+            <LogoutButton />
           </div>
         </header>
 

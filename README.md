@@ -16,7 +16,7 @@
 - **访客统计（仅管理员）**：累计访客与访问次数、今日 / 近 7 天 / 近 30 天分布、访问名单与最近流水（不记录 IP）
 - **管理员视角开关**：一键把界面切成普通用户视图，用来自查管理功能有没有漏隐藏（刷新后保持）
 - **宿舍自主认领**：管理员预置好宿舍，学生自己认领到自己名下
-- **与课表站单点登录**：课表站登录一次，本站免登（详见下文）
+- **与课表站单点登录**：课表站登录一次，本站免登；站内提供退出登录（两个站一起退，详见下文）
 - **可安装到桌面**：带完整图标集与 PWA manifest，可添加到主屏幕
 
 ## 和课表站的关系
@@ -111,7 +111,12 @@ APP_ID=selfhost
 APP_SECRET=<用 openssl rand -base64 32 生成>
 
 # 共用课表站会话：填课表站的 APP_SECRET，用于验签它签发的 JWT
-SSO_SECRET=<课表站的 APP_SECRET>
+SSO_SECRET=
+
+# 会话 cookie 的 Domain，必须与课表站的 COOKIE_DOMAIN 完全一致。
+# 否则「退出登录」删不掉那个共享 cookie（浏览器按 name+domain+path 匹配）。
+# 不配也能跑：会从请求的 Host 推（epower.example.com → .example.com）。
+COOKIE_DOMAIN=.stellaura.tech<课表站的 APP_SECRET>
 ADMIN_STUDENT_IDS=2025000001  # 这些学号登录后自动成为管理员（逗号分隔）
 ```
 
