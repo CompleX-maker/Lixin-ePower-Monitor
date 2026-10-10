@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+
+# ── 敏感文件：绝不可提交 ──────────────────────────────────────
+# data.sql 含学校统一身份认证密码、QQ邮箱SMTP授权码、Server酱 SendKey
+# data.sql 已从版本控制移除：含真实凭据，见 .gitignore
+*.sql.bak
+.env
+.env.*
+!.env.example
+
+# 调试截图
+*.png
+!docs/**/*.png

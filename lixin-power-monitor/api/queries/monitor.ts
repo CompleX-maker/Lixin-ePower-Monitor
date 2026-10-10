@@ -1,4 +1,5 @@
 import { desc, gte, eq, and, isNull } from "drizzle-orm";
+import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { getDb } from "./connection";
 import { readings, settings, dorms } from "@db/schema";
 
@@ -16,7 +17,9 @@ export const DEFAULT_DORM = {
 };
 
 export async function listDorms(): Promise<DormRow[]> {
-  return getDb().select().from(dorms).orderBy(dorms.id);
+  const rows = await getDb().select().from(dorms).orderBy(dorms.id);
+  // 卡密码在静态加密存储，读出时统一解密；历史明文会被 decryptSecret 原样放行
+  return rows.map((r) => ({ ...r, cardPass: decryptSecret(r.cardPass) }));
 }
 
 export async function createDorm(d: {
@@ -38,7 +41,7 @@ export async function createDorm(d: {
       roomLabel: d.roomLabel ?? null,
       emailTo: d.emailTo ?? null,
       cardUser: d.cardUser ?? null,
-      cardPass: d.cardPass ?? null,
+      cardPass: encryptSecret(d.cardPass) ?? null,
       createdAt: Date.now(),
     });
   return Number(res[0].insertId);
@@ -53,7 +56,7 @@ export async function updateDorm(
   if (patch.name !== undefined) set.name = patch.name;
   if (patch.emailTo !== undefined) set.emailTo = patch.emailTo;
   if (patch.cardUser !== undefined) set.cardUser = patch.cardUser;
-  if (patch.cardPass !== undefined) set.cardPass = patch.cardPass;
+  if (patch.cardPass !== undefined) set.cardPass = encryptSecret(patch.cardPass);
   if (Object.keys(set).length === 0) return;
   await getDb().update(dorms).set(set).where(eq(dorms.id, id));
 }
@@ -62,7 +65,7 @@ export async function updateDorm(
 export async function rebindDormsByCardUser(oldUser: string, newUser: string, newPass: string): Promise<void> {
   await getDb()
     .update(dorms)
-    .set({ cardUser: newUser, cardPass: newPass })
+    .set({ cardUser: newUser, cardPass: encryptSecret(newPass) })
     .where(eq(dorms.cardUser, oldUser));
 }
 
@@ -126,19 +129,30 @@ export async function recentReadings(limit: number, dormId?: number): Promise<Re
 }
 
 /* ---------- 配置 KV ---------- */
+/** 需要加密存储的设置项（含账号密码、邮箱授权码、推送 Key） */
+const SENSITIVE_KEYS = new Set(["ykt_password", "email_pass", "sct_sendkey"]);
+
 export async function getSetting(key: string): Promise<string | null> {
   const row = await getDb().query.settings.findFirst({ where: eq(settings.key, key) });
-  return row?.value ?? null;
+  if (!row?.value) return row?.value ?? null;
+  return SENSITIVE_KEYS.has(key) ? decryptSecret(row.value) : row.value;
 }
 
 export async function setSetting(key: string, value: string): Promise<void> {
+  const stored = SENSITIVE_KEYS.has(key) ? encryptSecret(value) : value;
   await getDb()
     .insert(settings)
-    .values({ key, value })
-    .onDuplicateKeyUpdate({ set: { value } });
+    .values({ key, value: stored })
+    .onDuplicateKeyUpdate({ set: { value: stored } });
 }
 
 export async function getAllSettings(): Promise<Record<string, string>> {
   const rows = await getDb().select().from(settings);
-  return Object.fromEntries(rows.map((r) => [r.key, r.value ?? ""]));
+  return Object.fromEntries(
+    rows.map((r) => {
+      const raw = r.value ?? "";
+      const out = SENSITIVE_KEYS.has(r.key) ? (decryptSecret(raw) ?? "") : raw;
+      return [r.key, out];
+    }),
+  );
 }
