@@ -61,6 +61,18 @@ export default function Home() {
   const utils = trpc.useUtils();
   const dormsQ = trpc.monitor.dorms.useQuery(undefined, { refetchInterval: 60_000 });
   const dorms = useMemo(() => dormsQ.data ?? [], [dormsQ.data]);
+
+  // 待认领的宿舍（只对登录用户可见；认领后归到自己名下）
+  const unclaimedQ = trpc.monitor.unclaimedDorms.useQuery(undefined, {
+    refetchInterval: 120_000,
+  });
+  const unclaimed = useMemo(() => unclaimedQ.data ?? [], [unclaimedQ.data]);
+  const claimDorm = trpc.monitor.claimDorm.useMutation({
+    onSuccess: () => {
+      void utils.invalidate();
+    },
+    onError: (e) => window.alert(e.message),
+  });
   const [selDorm, setSelDorm] = useState<number | null>(null);
   const dormId = dorms.find((d) => d.id === selDorm)?.id ?? dorms[0]?.id;
   const dorm = dorms.find((d) => d.id === dormId);
@@ -197,6 +209,35 @@ export default function Home() {
             <Plus className="mr-1 h-3.5 w-3.5" /> 添加宿舍
           </Button>
         </div>
+
+        {/* 待认领宿舍：已经有数据、但还没绑定归属，登录用户可一键认领 */}
+        {unclaimed.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-zinc-800 bg-zinc-900/40 px-3 py-2">
+            <span className="text-xs text-zinc-500">
+              待认领 {unclaimed.length} 个：
+            </span>
+            {unclaimed.map((u) => (
+              <button
+                key={u.id}
+                disabled={claimDorm.isPending}
+                className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/5 px-2.5 py-1 text-xs text-amber-300 transition-colors hover:bg-amber-500/15 disabled:opacity-50"
+                title="认领后只有你自己（和管理员）能看到这个宿舍"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `确认「${u.roomLabel || u.name}」是你的宿舍？\n\n认领后归属会绑定到你的学号，只有你能看到。`,
+                    )
+                  ) {
+                    claimDorm.mutate({ id: u.id });
+                  }
+                }}
+              >
+                <Plus className="h-3 w-3" />
+                {u.roomLabel || u.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 状态卡片 */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -411,7 +452,13 @@ function CascadeField({
         <SelectTrigger className="border-zinc-700 bg-zinc-950">
           <SelectValue placeholder={loading ? "加载中…" : (placeholder ?? "请选择")} />
         </SelectTrigger>
-        <SelectContent className="border-zinc-700 bg-zinc-900 text-zinc-100 max-h-64">
+        {/* position="popper" 必须保留：item-aligned 模式下长列表（房间有 400+ 项）
+            会在滚动时不断把选中项拉回视野，表现为滚轮回弹到顶部 */}
+        <SelectContent
+          position="popper"
+          sideOffset={4}
+          className="border-zinc-700 bg-zinc-900 text-zinc-100 max-h-64"
+        >
           {(items ?? []).map((it) => (
             <SelectItem key={it.id} value={it.id}>{it.name}</SelectItem>
           ))}

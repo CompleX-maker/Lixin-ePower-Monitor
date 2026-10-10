@@ -39,6 +39,34 @@ export async function dormIdsOf(studentId: string): Promise<number[]> {
   return rows.map((r) => Number(r.id));
 }
 
+/** 待认领的宿舍（card_user 为空） */
+export async function listUnclaimedDorms(): Promise<DormRow[]> {
+  const rows = await getDb()
+    .select()
+    .from(dorms)
+    .where(isNull(dorms.cardUser))
+    .orderBy(dorms.id);
+  return rows.map((r) => ({ ...r, cardPass: decryptSecret(r.cardPass) }));
+}
+
+/**
+ * 认领宿舍：把 card_user 置为当前学号。
+ * 用 WHERE 带 IS NULL 条件保证原子性 —— 并发认领时只有一个人能成功。
+ * @returns 是否认领成功（false = 已被他人抢先）
+ */
+export async function claimDormAs(dormId: number, studentId: string): Promise<boolean> {
+  const res = await getDb()
+    .update(dorms)
+    .set({ cardUser: studentId })
+    .where(and(eq(dorms.id, dormId), isNull(dorms.cardUser)));
+  return Number(res[0]?.affectedRows ?? 0) > 0;
+}
+
+/** 解除绑定（管理员用，把宿舍退回待认领状态） */
+export async function releaseDorm(dormId: number): Promise<void> {
+  await getDb().update(dorms).set({ cardUser: null }).where(eq(dorms.id, dormId));
+}
+
 /** 某个宿舍是否属于该学号 */
 export async function dormBelongsTo(dormId: number, studentId: string): Promise<boolean> {
   const row = await getDb().query.dorms.findFirst({

@@ -14,6 +14,9 @@ import {
   rebindDormsByCardUser,
   dormIdsOf,
   dormBelongsTo,
+  listUnclaimedDorms,
+  claimDormAs,
+  releaseDorm,
 } from "./queries/monitor";
 import { scrapeOnce, scrapeAll, manualRefresh, sendTestMail, schedulePoller } from "./poller";
 import { computeStats } from "./stats";
@@ -129,6 +132,37 @@ export const monitorRouter = createRouter({
       createdAt: d.createdAt,
     }));
   }),
+
+  /** 待认领的宿舍：登录用户可以认领到自己名下 */
+  unclaimedDorms: authedQuery.query(async () => {
+    const rows = await listUnclaimedDorms();
+    // 只回传展示所需字段，不带任何凭据
+    return rows.map((d) => ({
+      id: Number(d.id),
+      name: d.name,
+      roomLabel: d.roomLabel,
+      createdAt: d.createdAt,
+    }));
+  }),
+
+  /** 认领宿舍（并发安全：已被认领则报错） */
+  claimDorm: authedQuery
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const ok = await claimDormAs(input.id, ctx.studentId);
+      if (!ok) {
+        throw new TRPCError({ code: "CONFLICT", message: "这个宿舍已经被别人认领了" });
+      }
+      return { ok: true };
+    }),
+
+  /** 解除绑定：仅管理员，用于把宿舍退回待认领 */
+  releaseDorm: adminQuery
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await releaseDorm(input.id);
+      return { ok: true };
+    }),
 
   addDorm: authedQuery
     .input(
