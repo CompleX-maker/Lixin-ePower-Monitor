@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+
+/** 「一个账号只能有一个宿舍」的统一文案 */
+const DORM_QUOTA_MSG =
+  "一个账号只能绑定一个宿舍。如需更换，请先删除当前宿舍后重新添加";
 import { createRouter, publicQuery, authedQuery, adminQuery } from "./middleware";
 import {
   latestReading,
@@ -17,6 +21,7 @@ import {
   listUnclaimedDorms,
   claimDormAs,
   releaseDorm,
+  countDormsOf,
 } from "./queries/monitor";
 import { scrapeOnce, scrapeAll, manualRefresh, sendTestMail, schedulePoller } from "./poller";
 import { computeStats } from "./stats";
@@ -133,8 +138,19 @@ export const monitorRouter = createRouter({
     }));
   }),
 
+  /** 当前账号还能不能再加/认领宿舍（管理员始终可以） */
+  canAddDorm: authedQuery.query(async ({ ctx }) => {
+    if (ctx.isAdmin) return { canAdd: true, reason: null };
+    const n = await countDormsOf(ctx.studentId);
+    return n === 0
+      ? { canAdd: true, reason: null }
+      : { canAdd: false, reason: "一个账号只能绑定一个宿舍。如需更换，请先删除当前宿舍后重新添加" };
+  }),
+
   /** 待认领的宿舍：登录用户可以认领到自己名下 */
-  unclaimedDorms: authedQuery.query(async () => {
+  unclaimedDorms: authedQuery.query(async ({ ctx }) => {
+    // 一个账号只能有一个宿舍：已经有的就不必再看待认领列表
+    if (!ctx.isAdmin && (await countDormsOf(ctx.studentId)) > 0) return [];
     const rows = await listUnclaimedDorms();
     // 只回传展示所需字段，不带任何凭据
     return rows.map((d) => ({
@@ -149,6 +165,10 @@ export const monitorRouter = createRouter({
   claimDorm: authedQuery
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input, ctx }) => {
+      // 一个账号只能有一个宿舍（管理员不受限）
+      if (!ctx.isAdmin && (await countDormsOf(ctx.studentId)) > 0) {
+        throw new TRPCError({ code: "FORBIDDEN", message: DORM_QUOTA_MSG });
+      }
       const ok = await claimDormAs(input.id, ctx.studentId);
       if (!ok) {
         throw new TRPCError({ code: "CONFLICT", message: "这个宿舍已经被别人认领了" });
@@ -177,6 +197,10 @@ export const monitorRouter = createRouter({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      // 一个账号只能有一个宿舍（管理员不受限）
+      if (!ctx.isAdmin && (await countDormsOf(ctx.studentId)) > 0) {
+        throw new TRPCError({ code: "FORBIDDEN", message: DORM_QUOTA_MSG });
+      }
       const id = await createDorm({
         ...input,
         emailTo: input.emailTo?.trim() || null,

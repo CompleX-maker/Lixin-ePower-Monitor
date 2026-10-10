@@ -67,6 +67,15 @@ export async function releaseDorm(dormId: number): Promise<void> {
   await getDb().update(dorms).set({ cardUser: null }).where(eq(dorms.id, dormId));
 }
 
+/** 某学号当前名下的宿舍数量（「一个账号只能有一个宿舍」的配额校验用） */
+export async function countDormsOf(studentId: string): Promise<number> {
+  const rows = await getDb()
+    .select({ id: dorms.id })
+    .from(dorms)
+    .where(eq(dorms.cardUser, studentId));
+  return rows.length;
+}
+
 /** 某个宿舍是否属于该学号 */
 export async function dormBelongsTo(dormId: number, studentId: string): Promise<boolean> {
   const row = await getDb().query.dorms.findFirst({

@@ -67,6 +67,11 @@ export default function Home() {
     refetchInterval: 120_000,
   });
   const unclaimed = useMemo(() => unclaimedQ.data ?? [], [unclaimedQ.data]);
+  // 一个账号只能有一个宿舍：没有宿舍时才能添加/认领
+  const canAddQ = trpc.monitor.canAddDorm.useQuery();
+  const canAdd = canAddQ.data?.canAdd ?? false;
+  const quotaReason = canAddQ.data?.reason ?? "一个账号只能绑定一个宿舍";
+
   const claimDorm = trpc.monitor.claimDorm.useMutation({
     onSuccess: () => {
       void utils.invalidate();
@@ -185,7 +190,8 @@ export default function Home() {
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
-                {dorms.length > 1 && (
+                {/* 每人最多一个宿舍，删除按钮必须常显，否则换不了宿舍 */}
+                {(
                   <button
                     className="rounded-full p-0.5 text-zinc-600 hover:bg-zinc-800 hover:text-red-400"
                     title="删除该宿舍及其历史数据"
@@ -201,17 +207,27 @@ export default function Home() {
               </div>
             );
           })}
-          <Button
-            size="sm" variant="outline"
-            className="shrink-0 rounded-full border-dashed border-zinc-700 bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-amber-300"
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="mr-1 h-3.5 w-3.5" /> 添加宿舍
-          </Button>
+          {canAdd && (
+            <Button
+              size="sm" variant="outline"
+              className="shrink-0 rounded-full border-dashed border-zinc-700 bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-amber-300"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" /> 添加宿舍
+            </Button>
+          )}
+          {!canAdd && (
+            <span
+              className="shrink-0 whitespace-nowrap rounded-full border border-zinc-800 bg-zinc-900/40 px-3 py-1.5 text-xs text-zinc-500"
+              title={quotaReason}
+            >
+              一个账号仅限一个宿舍
+            </span>
+          )}
         </div>
 
         {/* 待认领宿舍：已经有数据、但还没绑定归属，登录用户可一键认领 */}
-        {unclaimed.length > 0 && (
+        {canAdd && unclaimed.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-zinc-800 bg-zinc-900/40 px-3 py-2">
             <span className="text-xs text-zinc-500">
               待认领 {unclaimed.length} 个：
