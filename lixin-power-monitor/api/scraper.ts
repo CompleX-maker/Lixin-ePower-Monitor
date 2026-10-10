@@ -336,3 +336,57 @@ export async function withCascadeSession<T>(
     return fn(sess);
   });
 }
+
+/* ---------------- 本站登录用：核验账密并读取账户信息 ---------------- */
+
+/**
+ * 从 weui 单元格里取一个字段。页面结构很规整：
+ *   <p>姓名</p></div><div class="weui-cell__ft">辛才豪</div>
+ */
+function parseWeuiCell(html: string, label: string): string | null {
+  const re = new RegExp(
+    `<p>\\s*${label}\\s*</p>\\s*</div>\\s*<div class="weui-cell__ft">\\s*([^<]*?)\\s*</div>`,
+  );
+  const v = re.exec(html)?.[1]?.trim();
+  return v ? v : null;
+}
+
+export type AccountProfile = {
+  studentId: string | null;
+  name: string | null;
+  college: string | null;
+  className: string | null;
+};
+
+/** 读取「账户信息」页（姓名 / 学工号 / 学校 / 班级）。失败不影响登录本身。 */
+export async function fetchAccountProfile(sess: Session): Promise<AccountProfile> {
+  try {
+    const hop = await followChain(sess.jar, `${YKT_BASE}/epay/h5/accountinfo`, {
+      headers: { Referer: INDEX_URL },
+    });
+    return {
+      studentId: parseWeuiCell(hop.text, "学工号"),
+      name: parseWeuiCell(hop.text, "姓名"),
+      college: parseWeuiCell(hop.text, "学校"),
+      className: parseWeuiCell(hop.text, "班级"),
+    };
+  } catch {
+    return { studentId: null, name: null, college: null, className: null };
+  }
+}
+
+/**
+ * 核验账密是否有效，并顺带取回姓名。
+ *
+ * 仅用于本站自己的登录入口：**核验完即丢，绝不保存密码**。
+ * 抓取宿舍读数用的是号池里的公共账号，与登录者本人无关。
+ * 账密错误会抛错（由调用方转成友好文案）。
+ */
+export async function verifyCredentials(
+  username: string,
+  password: string,
+): Promise<AccountProfile> {
+  const sess = await login(username, password);
+  const profile = await fetchAccountProfile(sess);
+  return { ...profile, studentId: profile.studentId ?? username };
+}

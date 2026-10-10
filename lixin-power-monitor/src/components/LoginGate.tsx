@@ -2,12 +2,15 @@ import { useEffect, useState, type ReactNode } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import Footer from "@/components/Footer";
-import { SCHEDULE_LOGIN_URL, SCHEDULE_ORIGIN } from "@/const";
+import { SCHEDULE_LOGIN_URL } from "@/const";
 import {
   CalendarDays,
   CheckCircle2,
   ExternalLink,
+  Eye,
+  EyeOff,
   Loader2,
   LogIn,
   ShieldCheck,
@@ -17,17 +20,22 @@ import {
 /**
  * 登录门禁。
  *
- * 本站没有独立账号体系：身份由课表站（stellaura.tech）签发，
- * 通过共享 cookie `lixin_jw_sid` 传递（Domain=.stellaura.tech）。
- * 所以这里的「登录」是跳去课表站完成统一身份认证，再自动跳回来。
- *
- * 跳转链接带 ?redirect=，课表站登录成功（或本来就已登录）后会自动
- * location.replace 回本页，不需要用户手动切回来。
+ * 两条登录路径并存（后端见 api/lib/session.ts）：
+ *   1. 本站直接登录：输学号密码，由本站向学校统一身份认证核验一次，
+ *      核验完即丢、不保存密码，然后签发本站自己的会话 cookie。
+ *   2. 从课表站带共享会话跳过来（SSO）：课表站已登录则免登。
  */
 export function LoginGate({ children }: { children: ReactNode }) {
-  // 用户点了登录、正在等对面的结果
+  const utils = trpc.useUtils();
+
+  const [studentId, setStudentId] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+  const [err, setErr] = useState("");
+
+  // SSO：点了「立信课表」、正在等对面登录完
   const [waiting, setWaiting] = useState(false);
-  // 点了「立即刷新」但仍是未登录 —— 用于给出更明确的排查提示
+  // 点了「立即刷新」但仍是未登录
   const [checkedNoResult, setCheckedNoResult] = useState(false);
 
   const me = trpc.me.useQuery(undefined, {
@@ -35,6 +43,14 @@ export function LoginGate({ children }: { children: ReactNode }) {
     staleTime: 5_000,
     refetchInterval: waiting ? 3_000 : false,
     refetchOnWindowFocus: true,
+  });
+
+  const login = trpc.login.useMutation({
+    onSuccess: async () => {
+      setPassword("");
+      await utils.invalidate();
+    },
+    onError: (e) => setErr(e.message),
   });
 
   // 从课表站切回本页时立即重查，避免干等轮询
@@ -59,15 +75,21 @@ export function LoginGate({ children }: { children: ReactNode }) {
   }
 
   if (!me.data?.loggedIn) {
-    const goLogin = () => {
-      // 新标签页打开，本页保持不动 —— 登录完成后对面会自己跳回来
+    const goSchedule = () => {
       window.open(SCHEDULE_LOGIN_URL, "_blank", "noopener,noreferrer");
       setWaiting(true);
     };
 
+    const canSubmit = studentId.trim().length >= 4 && password.length > 0 && !login.isPending;
+
+    const submit = () => {
+      if (!canSubmit) return;
+      setErr("");
+      login.mutate({ studentId: studentId.trim(), password });
+    };
+
     return (
       <div className="dark flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
-        {/* 顶部一层极淡的琥珀辉光，让深色页面不至于太死 */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(ellipse_at_top,rgba(251,191,36,0.10),transparent_65%)]"
@@ -84,19 +106,75 @@ export function LoginGate({ children }: { children: ReactNode }) {
                   className="h-16 w-16 rounded-2xl shadow-lg shadow-amber-500/10"
                 />
                 <h1 className="mt-3 text-xl font-bold tracking-wide">立信电费监测站</h1>
-                <p className="mt-1 text-xs text-zinc-500">
-                  登录后查看你宿舍的电费
-                </p>
+                <p className="mt-1 text-xs text-zinc-500">登录后查看你宿舍的电费</p>
               </div>
 
-              {/* 主登录入口 */}
-              <Button
-                className="h-11 w-full bg-amber-500 text-base font-semibold text-zinc-950 hover:bg-amber-400"
-                onClick={goLogin}
+              {/* 主登录：本站直接登录 */}
+              <form
+                className="space-y-2.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submit();
+                }}
               >
-                <LogIn className="mr-2 h-4 w-4" />
-                统一身份认证登录
-              </Button>
+                <Input
+                  placeholder="学号"
+                  value={studentId}
+                  inputMode="numeric"
+                  autoComplete="username"
+                  onChange={(e) => {
+                    setStudentId(e.target.value);
+                    setErr("");
+                  }}
+                  className="border-zinc-700 bg-zinc-950"
+                />
+                <div className="relative">
+                  <Input
+                    placeholder="统一身份认证密码"
+                    type={showPwd ? "text" : "password"}
+                    value={password}
+                    autoComplete="current-password"
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setErr("");
+                    }}
+                    className="border-zinc-700 bg-zinc-950 pr-10"
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={showPwd ? "隐藏密码" : "显示密码"}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300"
+                    onClick={() => setShowPwd((v) => !v)}
+                  >
+                    {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="h-11 w-full bg-amber-500 text-base font-semibold text-zinc-950 hover:bg-amber-400"
+                  disabled={!canSubmit}
+                >
+                  {login.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      正在核验…
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="mr-2 h-4 w-4" />
+                      统一身份认证登录
+                    </>
+                  )}
+                </Button>
+              </form>
+
+              {err && (
+                <p className="rounded-lg bg-red-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-red-400">
+                  {err}
+                </p>
+              )}
 
               {/* 其他登录方式 */}
               <div className="flex items-center gap-3">
@@ -107,16 +185,16 @@ export function LoginGate({ children }: { children: ReactNode }) {
 
               <button
                 type="button"
-                onClick={goLogin}
+                onClick={goSchedule}
                 className="flex w-full items-center gap-3 rounded-lg border border-zinc-800 px-3 py-2.5 text-left transition-colors hover:border-zinc-700 hover:bg-zinc-900"
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800">
                   <CalendarDays className="h-4 w-4 text-amber-400" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm text-zinc-200">立信课表</span>
+                  <span className="block text-sm text-zinc-200">用立信课表账号登录</span>
                   <span className="block text-[11px] text-zinc-600">
-                    已登录课表站则免登，直接跳回
+                    已登录课表站则免登，自动跳回
                   </span>
                 </span>
                 <ExternalLink className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
@@ -125,10 +203,10 @@ export function LoginGate({ children }: { children: ReactNode }) {
               {/* 说明 */}
               <div className="space-y-2 rounded-lg bg-zinc-950/60 p-3 text-[11px] leading-relaxed text-zinc-500">
                 <p className="flex items-start gap-1.5">
-                  <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span>
-                    点上方入口会<strong className="text-zinc-400">新开一个标签页</strong>
-                    去 {SCHEDULE_ORIGIN.replace("https://", "")} 登录，本页不会丢
+                    密码仅用于本次向学校统一身份认证核验，<strong className="text-zinc-400">核验完即丢</strong>，
+                    本站不保存
                   </span>
                 </p>
                 <p className="flex items-start gap-1.5">
@@ -136,17 +214,17 @@ export function LoginGate({ children }: { children: ReactNode }) {
                   <span>每个人只能看到学号绑定到自己名下的宿舍</span>
                 </p>
                 <p className="flex items-start gap-1.5">
-                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>登录状态保留 30 天，两个站共用，不用重复登</span>
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>登录状态保留 30 天，不用反复登</span>
                 </p>
               </div>
 
-              {/* 等待中 */}
+              {/* SSO 等待中 */}
               {waiting && (
                 <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-center">
                   <p className="flex items-center justify-center gap-1.5 text-xs font-medium text-amber-400">
                     <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
-                    正在等待登录…
+                    正在等待课表站登录…
                   </p>
                   <p className="text-[11px] leading-relaxed text-zinc-500">
                     在新标签页登录完成后会自动跳回来，也可以直接切回本页
@@ -166,10 +244,10 @@ export function LoginGate({ children }: { children: ReactNode }) {
                 {me.isFetching ? "检查中…" : "我已登录，立即刷新"}
               </button>
 
-              {checkedNoResult && (
+              {checkedNoResult && !waiting && (
                 <p className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-400/90">
-                  还是没检测到登录。多半是浏览器里存着旧版会话（不含跨域属性）。
-                  请点上面的入口去课表站<strong>重新登录一次</strong>，登录后会自动跳回本页。
+                  没检测到登录。如果用课表站登录过，多半是浏览器里存着旧版会话
+                  （不含跨域属性），去课表站<strong>重新登录一次</strong>即可。
                 </p>
               )}
             </CardContent>
@@ -184,4 +262,5 @@ export function LoginGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+// App.tsx 用的是具名导入，这里两个都导出，避免再来一次构建失败
 export default LoginGate;
