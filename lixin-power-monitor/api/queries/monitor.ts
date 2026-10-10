@@ -1,4 +1,4 @@
-import { desc, gte, eq, and, isNull } from "drizzle-orm";
+import { desc, gte, eq, and, isNull, inArray } from "drizzle-orm";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { getDb } from "./connection";
 import { readings, settings, dorms } from "@db/schema";
@@ -16,10 +16,35 @@ export const DEFAULT_DORM = {
   roomLabel: "6-520",
 };
 
-export async function listDorms(): Promise<DormRow[]> {
-  const rows = await getDb().select().from(dorms).orderBy(dorms.id);
+/**
+ * 宿舍列表。
+ * @param studentId 传入则只返回该学号绑定的宿舍（普通用户视角）；
+ *                  不传则返回全部（供后台轮询与管理员使用）
+ */
+export async function listDorms(studentId?: string): Promise<DormRow[]> {
+  const base = getDb().select().from(dorms);
+  const rows = studentId
+    ? await base.where(eq(dorms.cardUser, studentId)).orderBy(dorms.id)
+    : await base.orderBy(dorms.id);
   // 卡密码在静态加密存储，读出时统一解密；历史明文会被 decryptSecret 原样放行
   return rows.map((r) => ({ ...r, cardPass: decryptSecret(r.cardPass) }));
+}
+
+/** 取某学号可访问的宿舍 id 列表 */
+export async function dormIdsOf(studentId: string): Promise<number[]> {
+  const rows = await getDb()
+    .select({ id: dorms.id })
+    .from(dorms)
+    .where(eq(dorms.cardUser, studentId));
+  return rows.map((r) => Number(r.id));
+}
+
+/** 某个宿舍是否属于该学号 */
+export async function dormBelongsTo(dormId: number, studentId: string): Promise<boolean> {
+  const row = await getDb().query.dorms.findFirst({
+    where: and(eq(dorms.id, dormId), eq(dorms.cardUser, studentId)),
+  });
+  return Boolean(row);
 }
 
 export async function createDorm(d: {
@@ -105,27 +130,37 @@ export async function insertReading(r: {
     .values({ ...r, errMsg: r.errMsg ?? null });
 }
 
-export async function latestReading(dormId?: number): Promise<ReadingRow | undefined> {
-  if (dormId == null) {
+export async function latestReading(dormIds?: number[]): Promise<ReadingRow | undefined> {
+  if (dormIds == null) {
     return getDb().query.readings.findFirst({ orderBy: [desc(readings.fetchedAt)] });
   }
+  if (dormIds.length === 0) return undefined; // 无可访问宿舍
   return getDb().query.readings.findFirst({
-    where: eq(readings.dormId, dormId),
+    where: inArray(readings.dormId, dormIds),
     orderBy: [desc(readings.fetchedAt)],
   });
 }
 
-export async function readingsSince(sinceMs: number, dormId?: number): Promise<ReadingRow[]> {
-  const cond = dormId == null
-    ? gte(readings.fetchedAt, sinceMs)
-    : and(gte(readings.fetchedAt, sinceMs), eq(readings.dormId, dormId));
+export async function readingsSince(sinceMs: number, dormIds?: number[]): Promise<ReadingRow[]> {
+  if (dormIds != null && dormIds.length === 0) return [];
+  const cond =
+    dormIds == null
+      ? gte(readings.fetchedAt, sinceMs)
+      : and(gte(readings.fetchedAt, sinceMs), inArray(readings.dormId, dormIds));
   return getDb().select().from(readings).where(cond).orderBy(readings.fetchedAt);
 }
 
-export async function recentReadings(limit: number, dormId?: number): Promise<ReadingRow[]> {
-  const q = getDb().select().from(readings);
-  if (dormId != null) q.where(eq(readings.dormId, dormId));
-  return q.orderBy(desc(readings.fetchedAt)).limit(limit);
+export async function recentReadings(limit: number, dormIds?: number[]): Promise<ReadingRow[]> {
+  if (dormIds != null && dormIds.length === 0) return [];
+  if (dormIds != null) {
+    return getDb()
+      .select()
+      .from(readings)
+      .where(inArray(readings.dormId, dormIds))
+      .orderBy(desc(readings.fetchedAt))
+      .limit(limit);
+  }
+  return getDb().select().from(readings).orderBy(desc(readings.fetchedAt)).limit(limit);
 }
 
 /* ---------- 配置 KV ---------- */

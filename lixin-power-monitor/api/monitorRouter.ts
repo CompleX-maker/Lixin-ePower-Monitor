@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { createRouter, publicQuery } from "./middleware";
+import { TRPCError } from "@trpc/server";
+import { createRouter, publicQuery, authedQuery, adminQuery } from "./middleware";
 import {
   latestReading,
   readingsSince,
@@ -11,12 +12,27 @@ import {
   deleteDorm,
   updateDorm,
   rebindDormsByCardUser,
+  dormIdsOf,
+  dormBelongsTo,
 } from "./queries/monitor";
 import { scrapeOnce, scrapeAll, manualRefresh, sendTestMail, schedulePoller } from "./poller";
 import { computeStats } from "./stats";
 import { cascade, withCascadeSession } from "./scraper";
 
 const DAY = 24 * 3600 * 1000;
+
+/**
+ * 解析当前用户可访问的宿舍 id 列表。
+ * @param requested 前端指定的宿舍；若指定了但不属于该用户，直接 403
+ */
+async function allowedDormIds(studentId: string, requested?: number): Promise<number[]> {
+  const ids = await dormIdsOf(studentId);
+  if (requested == null) return ids;
+  if (!ids.includes(requested)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "无权访问该宿舍" });
+  }
+  return [requested];
+}
 
 let lastOrigin: string | null = null;
 /** 记录站点公网 origin（内存缓存，变化才写库） */
@@ -41,7 +57,7 @@ async function requireCreds(): Promise<{ username: string; password: string }> {
 
 export const monitorRouter = createRouter({
   /* ---------------- 数据查询（可按宿舍过滤） ---------------- */
-  current: publicQuery
+  current: authedQuery
     .input(z.object({ dormId: z.number().optional() }).optional())
     .query(async ({ input, ctx }) => {
       // 顺手记录站点公网地址（保活自 ping 用）：前端每 60s 轮询本接口，有人访问就能学到 origin
@@ -50,32 +66,36 @@ export const monitorRouter = createRouter({
         const proto = ctx.req.headers.get("x-forwarded-proto") ?? "https";
         void rememberOrigin(`${proto}://${host}`);
       }
-      return (await latestReading(input?.dormId)) ?? null;
+      const ids = await allowedDormIds(ctx.studentId, input?.dormId);
+      return (await latestReading(ids)) ?? null;
     }),
 
-  stats: publicQuery
+  stats: authedQuery
     .input(z.object({ dormId: z.number().optional() }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      const ids = await allowedDormIds(ctx.studentId, input?.dormId);
       const now = Date.now();
-      const rows7d = await readingsSince(now - 7 * DAY, input?.dormId);
-      const latest = await latestReading(input?.dormId);
+      const rows7d = await readingsSince(now - 7 * DAY, ids);
+      const latest = await latestReading(ids);
       return computeStats(rows7d, latest?.ok ? latest.elecKwh : null, now);
     }),
 
-  history: publicQuery
+  history: authedQuery
     .input(z.object({ hours: z.number().min(1).max(24 * 90).default(24), dormId: z.number().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      const ids = await allowedDormIds(ctx.studentId, input.dormId);
       const since = Date.now() - input.hours * 3600 * 1000;
-      const rows = await readingsSince(since, input.dormId);
+      const rows = await readingsSince(since, ids);
       return rows
         .filter((r) => r.ok)
         .map((r) => ({ t: r.fetchedAt, elec: r.elecKwh, card: r.cardBalance }));
     }),
 
-  recent: publicQuery
+  recent: authedQuery
     .input(z.object({ limit: z.number().min(1).max(200).default(30), dormId: z.number().optional() }))
-    .query(async ({ input }) => {
-      const rows = await recentReadings(input.limit, input.dormId);
+    .query(async ({ input, ctx }) => {
+      const ids = await allowedDormIds(ctx.studentId, input.dormId);
+      const rows = await recentReadings(input.limit, ids);
       return rows.map((r) => ({
         id: Number(r.id),
         t: r.fetchedAt,
@@ -87,8 +107,9 @@ export const monitorRouter = createRouter({
     }),
 
   /* ---------------- 宿舍管理 ---------------- */
-  dorms: publicQuery.query(async () => {
-    const rows = await listDorms();
+  dorms: authedQuery.query(async ({ ctx }) => {
+    // 管理员看全部，普通用户只看自己绑定的
+    const rows = await listDorms(ctx.isAdmin ? undefined : ctx.studentId);
     let acctErrs: Record<string, string> = {};
     try {
       acctErrs = JSON.parse((await getSetting("account_errors")) ?? "{}");
@@ -109,7 +130,7 @@ export const monitorRouter = createRouter({
     }));
   }),
 
-  addDorm: publicQuery
+  addDorm: authedQuery
     .input(
       z.object({
         name: z.string().min(1).max(64),
@@ -121,15 +142,20 @@ export const monitorRouter = createRouter({
         emailTo: z.string().max(256).optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const id = await createDorm({ ...input, emailTo: input.emailTo?.trim() || null });
+    .mutation(async ({ input, ctx }) => {
+      const id = await createDorm({
+        ...input,
+        emailTo: input.emailTo?.trim() || null,
+        // 归属绑定到当前登录学号，之后只有本人（和管理员）能看到
+        cardUser: ctx.studentId,
+      });
       // 立即抓一轮，让新宿舍马上有数据（绕过手动刷新防抖）
       void scrapeAll().catch((e) => console.error("[router] addDorm 后抓取失败", e));
       return { ok: true, id: Number(id) };
     }),
 
   /** 编辑宿舍：备注名 / 专属邮箱 / 绑定一卡通（cardUser 传空串 = 解绑） */
-  updateDorm: publicQuery
+  updateDorm: authedQuery
     .input(
       z.object({
         id: z.number(),
@@ -139,7 +165,10 @@ export const monitorRouter = createRouter({
         cardPass: z.string().max(256).optional(), // 不传 = 保持不变
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.isAdmin && !(await dormBelongsTo(input.id, ctx.studentId))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "无权修改该宿舍" });
+      }
       const patch: { name?: string; emailTo?: string | null; cardUser?: string | null; cardPass?: string | null } = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.emailTo !== undefined) patch.emailTo = input.emailTo.trim() || null;
@@ -159,13 +188,16 @@ export const monitorRouter = createRouter({
       return { ok: true };
     }),
 
-  removeDorm: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  removeDorm: authedQuery.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+    if (!ctx.isAdmin && !(await dormBelongsTo(input.id, ctx.studentId))) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "无权删除该宿舍" });
+    }
     await deleteDorm(input.id);
     return { ok: true };
   }),
 
   /* ---------------- 级联选择（添加宿舍，走学校接口） ---------------- */
-  cascade: publicQuery
+  cascade: authedQuery
     .input(
       z.object({
         level: z.enum(["systems", "areas", "districts", "buildings", "floors", "rooms"]),
@@ -198,10 +230,12 @@ export const monitorRouter = createRouter({
       });
     }),
 
-  refresh: publicQuery.mutation(async () => manualRefresh()),
+  refresh: authedQuery.mutation(async () => manualRefresh()),
 
   /* ---------------- 设置 ---------------- */
-  getSettings: publicQuery.query(async () => {
+  // 普通用户也需要 threshold / 账号错误提示来渲染页面，
+  // 因此这里用 authedQuery，再按身份裁剪敏感字段（账号、邮箱、推送 Key 仅管理员可见）
+  getSettings: authedQuery.query(async ({ ctx }) => {
     const username = (await getSetting("ykt_username")) ?? "";
     const hasPassword = Boolean(await getSetting("ykt_password"));
     const threshold = parseFloat((await getSetting("threshold")) ?? "") || 10;
@@ -215,6 +249,23 @@ export const monitorRouter = createRouter({
     try {
       accountErrors = JSON.parse((await getSetting("account_errors")) ?? "{}");
     } catch { /* 忽略解析失败 */ }
+    if (!ctx.isAdmin) {
+      // 非管理员：只暴露渲染所需的最小信息，账号 / 邮箱 / Key 一律不下发
+      return {
+        username: "",
+        hasPassword: false,
+        threshold,
+        pollMinutes,
+        sctKey: "",
+        hasSctKey: false,
+        emailUser: "",
+        emailTo: "",
+        emailEnabled: false,
+        hasEmailPass: false,
+        accountErrors,
+      };
+    }
+
     return {
       username,
       hasPassword,
@@ -230,7 +281,7 @@ export const monitorRouter = createRouter({
     };
   }),
 
-  updateCredentials: publicQuery
+  updateCredentials: adminQuery
     .input(z.object({ username: z.string().min(1), password: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const oldUser = (await getSetting("ykt_username")) ?? "";
@@ -243,7 +294,7 @@ export const monitorRouter = createRouter({
       return { ok: !bad, errMsg: bad?.errMsg ?? null };
     }),
 
-  updateAlert: publicQuery
+  updateAlert: adminQuery
     .input(z.object({ threshold: z.number().min(0).max(1000), pollMinutes: z.number().min(5).max(24 * 60) }))
     .mutation(async ({ input }) => {
       await setSetting("threshold", String(input.threshold));
@@ -252,14 +303,14 @@ export const monitorRouter = createRouter({
       return { ok: true };
     }),
 
-  updateSct: publicQuery
+  updateSct: adminQuery
     .input(z.object({ sendkey: z.string().max(128) }))
     .mutation(async ({ input }) => {
       await setSetting("sct_sendkey", input.sendkey.trim());
       return { ok: true };
     }),
 
-  testSct: publicQuery.mutation(async () => {
+  testSct: adminQuery.mutation(async () => {
     const sendkey = await getSetting("sct_sendkey");
     if (!sendkey) return { ok: false, errMsg: "尚未配置 SendKey" };
     try {
@@ -279,7 +330,7 @@ export const monitorRouter = createRouter({
   }),
 
   /* ---------------- QQ 邮箱 ---------------- */
-  updateEmail: publicQuery
+  updateEmail: adminQuery
     .input(
       z.object({
         emailUser: z.string().max(128),
@@ -296,5 +347,5 @@ export const monitorRouter = createRouter({
       return { ok: true };
     }),
 
-  testEmail: publicQuery.mutation(async () => sendTestMail()),
+  testEmail: adminQuery.mutation(async () => sendTestMail()),
 });
