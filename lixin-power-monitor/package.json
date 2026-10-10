@@ -1,7 +1,6 @@
 {
-  "name": "my-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.3.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -100,5 +99,7 @@
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",
     "vitest": "^4.0.16"
-  }
+  },
+  "description": "上海立信会计金融学院宿舍电费监测站：定时抓取电量与一卡通余额，低电量提醒，与课表站单点登录",
+  "name": "lixin-epower-monitor"
 }
