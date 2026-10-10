@@ -23,6 +23,12 @@ import {
   releaseDorm,
   countDormsOf,
 } from "./queries/monitor";
+import {
+  recentVisits,
+  visitByPeriod,
+  visitByUser,
+  visitOverview,
+} from "./queries/visits";
 import { scrapeOnce, scrapeAll, manualRefresh, sendTestMail, schedulePoller } from "./poller";
 import { computeStats } from "./stats";
 import { cascade, withCascadeSession } from "./scraper";
@@ -113,6 +119,19 @@ export const monitorRouter = createRouter({
         err: r.errMsg,
       }));
     }),
+
+  /* ---------------- 访客统计（仅管理员） ---------------- */
+
+  /** 管理员：访问统计（总体 + 时间维度 + 学号名单 + 最近流水） */
+  visitStats: adminQuery.query(async () => {
+    const [overview, periods, users, recent] = await Promise.all([
+      visitOverview(),
+      visitByPeriod(),
+      visitByUser(),
+      recentVisits(60),
+    ]);
+    return { overview, periods, users, recent };
+  }),
 
   /* ---------------- 宿舍管理 ---------------- */
   dorms: authedQuery.query(async ({ ctx }) => {

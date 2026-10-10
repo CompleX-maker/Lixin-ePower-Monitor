@@ -1,9 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>电费监测站</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>立信电费监测站</title>
+    <meta
+      name="description"
+      content="上海立信会计金融学院宿舍电费监测站：绑定宿舍后自动定时抓取剩余电量与一卡通余额，给出预计可用天数与近 24 小时耗电，余额偏低时邮件提醒。"
+    />
+
+    <!-- 图标：SVG 优先，PNG 兜底（老浏览器不认 SVG favicon） -->
+    <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- iOS 独立应用支持 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="电费监测" />
   </head>
   <body>
     <div id="root"></div>

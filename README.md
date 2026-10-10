@@ -17,6 +17,7 @@
 - **管理员视角开关**：一键把界面切成普通用户视图，用来自查管理功能有没有漏隐藏（刷新后保持）
 - **宿舍自主认领**：管理员预置好宿舍，学生自己认领到自己名下
 - **与课表站单点登录**：课表站登录一次，本站免登（详见下文）
+- **可安装到桌面**：带完整图标集与 PWA manifest，可添加到主屏幕
 
 ## 和课表站的关系
 
@@ -59,6 +60,7 @@ https://stellaura.tech/?redirect=https%3A%2F%2Fepower.stellaura.tech%2F
 .
 ├── README.md / CHANGELOG.md / .env.example
 ├── lixin-power-monitor/     ← 应用本体（Node + React 全栈）
+│   └── public/              ← 图标与 PWA manifest（构建时原样拷到 dist/public）
 └── Procfile, requirements.txt, railway.json, schema.sql
                             ← 更早的 Flask 原型遗留，已不再使用
 ```

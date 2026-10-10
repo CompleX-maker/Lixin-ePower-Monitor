@@ -52,10 +52,13 @@ function b64urlToBuf(s: string): Buffer {
 }
 
 /**
- * 校验 JWT 并返回学号。
+ * 校验 JWT 并返回载荷。
  * 返回 null 表示：未登录 / 签名不对 / 已过期 / 未配置密钥。
+ *
+ * 载荷里除了 sid（学号）还有课表站顺带签发的 name（姓名快照）。
+ * name 是可选的 —— 老 cookie 没有这个字段，读不到就当 null。
  */
-export function verifySessionJwt(token: string | null): string | null {
+function verifyPayload(token: string | null): { sid: string; name: string | null } | null {
   if (!token) return null;
 
   const key = getKey();
@@ -89,7 +92,29 @@ export function verifySessionJwt(token: string | null): string | null {
     return null;
   }
 
-  return typeof payload.sid === "string" && payload.sid ? payload.sid : null;
+  if (typeof payload.sid !== "string" || !payload.sid) return null;
+  return {
+    sid: payload.sid,
+    name: typeof payload.name === "string" && payload.name ? payload.name : null,
+  };
+}
+
+/** 校验 JWT 并返回学号 */
+export function verifySessionJwt(token: string | null): string | null {
+  return verifyPayload(token)?.sid ?? null;
+}
+
+export type SessionInfo = { studentId: string; name: string | null };
+
+/** 校验 JWT 并返回完整会话信息（学号 + 姓名快照） */
+export function verifySessionInfo(token: string | null): SessionInfo | null {
+  const p = verifyPayload(token);
+  return p ? { studentId: p.sid, name: p.name } : null;
+}
+
+/** 从请求中取完整会话（学号 + 姓名） */
+export function currentSessionInfo(req: Request): SessionInfo | null {
+  return verifySessionInfo(readCookie(req, SSO_COOKIE));
 }
 
 /** 从请求中取当前登录学号 */

@@ -22,6 +22,10 @@ import {
   Zap, Wallet, CalendarClock, Activity, RefreshCw, Settings2, Bell, KeyRound, Radio,
   Plus, X, Mail, Building2, Pencil,
 } from "lucide-react";
+import VisitStatsPanel from "@/components/VisitStatsPanel";
+import MyMailCard from "@/components/MyMailCard";
+import Footer from "@/components/Footer";
+import AdminPreviewToggle, { useIsAdmin } from "@/components/AdminPreviewToggle";
 
 const TZ = "Asia/Shanghai";
 const fmtTime = (ms: number, withDate = true) =>
@@ -61,6 +65,11 @@ export default function Home() {
   const utils = trpc.useUtils();
   const dormsQ = trpc.monitor.dorms.useQuery(undefined, { refetchInterval: 60_000 });
   const dorms = useMemo(() => dormsQ.data ?? [], [dormsQ.data]);
+
+  // 当前登录身份（来自课表站共享会话）。发件邮箱/号池这类全局配置只有管理员能看。
+  // 走 useIsAdmin 而不是直接用 me.isAdmin：管理员可以关掉「管理员视角」，
+  // 让整个界面按普通用户渲染，方便自查权限 UI 有没有漏隐藏。
+  const { isAdmin } = useIsAdmin();
 
   // 待认领的宿舍（只对登录用户可见；认领后归到自己名下）
   const unclaimedQ = trpc.monitor.unclaimedDorms.useQuery(undefined, {
@@ -163,6 +172,9 @@ export default function Home() {
             </Button>
           </div>
         </header>
+
+        {/* 管理员视角开关：仅真正的管理员可见，普通用户这里什么都不渲染 */}
+        <AdminPreviewToggle />
 
         {/* 宿舍切换 */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -421,18 +433,30 @@ export default function Home() {
             </CardContent>
           </Card>
 
-          <SettingsCard
-            settings={settingsQ.data}
-            onSaved={() => {
-              utils.monitor.invalidate();
-              settingsQ.refetch();
-            }}
-          />
+          {isAdmin ? (
+            <SettingsCard
+              settings={settingsQ.data}
+              onSaved={() => {
+                utils.monitor.invalidate();
+                settingsQ.refetch();
+              }}
+            />
+          ) : (
+            /* 普通用户看不到发件邮箱 / SMTP 授权码 / 号池账号这些全局配置，
+               只需要填一个「提醒发到哪个邮箱」 */
+            <MyMailCard dorm={dorm} />
+          )}
         </div>
 
-        <footer className="pt-2 text-center text-xs text-zinc-600">
+        {/* 访客统计：仅管理员；组件内部对 403 也会静默不渲染 */}
+        {isAdmin && <VisitStatsPanel />}
+
+        <p className="pt-2 text-center text-xs text-zinc-600">
           数据源：ykt.lixin.edu.cn 一卡通服务平台 · 会话失效自动重登 · 账号密码仅存服务端
-        </footer>
+        </p>
+
+        {/* GitHub 求 Star + 署名 + 备案 */}
+        <Footer />
       </div>
 
       <AddDormDialog

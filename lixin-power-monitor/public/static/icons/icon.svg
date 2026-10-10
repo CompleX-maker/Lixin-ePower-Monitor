@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="立信电费监测站">
+  <defs>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#09090b"/>
+  <path d="M271.4 102.4 L117.8 286.7 L240.6 286.7 L225.3 409.6 L394.2 225.3 L271.4 225.3 Z"
+        fill="url(#bolt)"/>
+</svg>

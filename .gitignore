@@ -11,5 +11,8 @@ data.sql
 .env.*
 !.env.example
 
-# 调试截图
-*.png
+# 调试截图：随手截在仓库根目录的，不入库。
+# 注意用 /*.png 而不是 *.png —— 后者会连
+# lixin-power-monitor/public/ 下的站点图标一起挡掉。
+/*.png
+/*.jpg

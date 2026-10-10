@@ -40,3 +40,13 @@ export const settings = mysqlTable("settings", {
   key: varchar("key", { length: 64 }).primaryKey(),
   value: text("value"),
 });
+
+// 访客统计：谁在什么时候打开过本站。
+// 仅保存身份快照（学号 + 姓名），不记录 IP 与设备信息。
+// 同一学号 5 分钟内只记一条，避免刷新刷屏。
+export const visitLogs = mysqlTable("visit_logs", {
+  id: serial("id").primaryKey(),
+  studentId: varchar("student_id", { length: 64 }).notNull(),
+  realName: varchar("real_name", { length: 64 }),
+  visitedAt: bigint("visited_at", { mode: "number" }).notNull(), // epoch 毫秒
+});
