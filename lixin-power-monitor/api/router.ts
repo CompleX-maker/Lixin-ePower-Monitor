@@ -146,9 +146,13 @@ export const appRouter = createRouter({
     // 本站自己的会话（主机专属）
     setCookie(SESSION_COOKIE, ownCookieOptions(ctx.req.headers));
 
-    // 课表站的共享会话（必须带上与签发时一致的 Domain，否则删不掉）
+    // 课表站的共享会话 —— **两种都要清**。
+    // 浏览器按 name+domain+path 存 cookie，而课表站历史上签发过带 Domain 的
+    // 和不带 Domain（主机专属）两种，同名同路径会同时发出，读到哪个不确定。
+    // 只清一种，用户就会「点了退出还登着」，甚至切换成另一个账号。
     const shared = sessionCookieOptions(ctx.req.headers);
-    setCookie(SSO_COOKIE, shared, shared.domain);
+    setCookie(SSO_COOKIE, shared, shared.domain); // 带 Domain 的那条
+    setCookie(SSO_COOKIE, shared); // 主机专属的那条
 
     return { ok: true as const };
   }),
