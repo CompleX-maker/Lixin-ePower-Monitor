@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 
@@ -22,6 +23,9 @@ import {
   claimDormAs,
   releaseDorm,
   countDormsOf,
+  findSongjiangDorm,
+  insertReading,
+  listSongjiangTargets,
 } from "./queries/monitor";
 import {
   recentVisits,
@@ -120,6 +124,109 @@ export const monitorRouter = createRouter({
       }));
     }),
 
+  /* ---------------- 松江数据接收（校内采集端） ---------------- */
+
+  /**
+   * 采集端拉取「要去哪些房间抄表」。
+   *
+   * 房间清单只在网页上配置一次，采集端不用另外维护一份配置文件
+   * —— 两边各存一份迟早会对不上。
+   */
+  songjiangTargets: publicQuery
+    .input(z.object({ token: z.string().min(1).max(128) }))
+    .query(async ({ input }) => {
+      const expected = process.env.INGEST_TOKEN ?? "";
+      if (!expected) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "服务端未配置 INGEST_TOKEN",
+        });
+      }
+      const a = Buffer.from(input.token);
+      const b = Buffer.from(expected);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "token 不正确" });
+      }
+      return listSongjiangTargets();
+    }),
+
+
+  /**
+   * 松江电控数据接收。
+   *
+   * 松江那套集中器（http://192.168.134.<楼号>/）只在校园内网可达，
+   * 服务器（阿里云）进不去，所以由一台**在校园网内的机器**定时抓取后推到这里。
+   *
+   * 鉴权用共享 token（.env 的 INGEST_TOKEN），恒定时间比较。
+   * 按「楼号 + 房间号」定位宿舍，查不到的会回报 ignored，便于排查配置。
+   */
+  ingestSongjiang: publicQuery
+    .input(
+      z.object({
+        token: z.string().min(1).max(128),
+        readings: z
+          .array(
+            z.object({
+              building: z.number().int().min(1).max(99),
+              room: z.string().min(1).max(8), // 4 位房间号，如 "4019"
+              kwh: z.number().nullable(), // null = 没查到（房间号不存在）
+              err: z.string().max(200).optional(),
+            }),
+          )
+          .min(1)
+          .max(500),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const expected = process.env.INGEST_TOKEN ?? "";
+      if (!expected) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "服务端未配置 INGEST_TOKEN",
+        });
+      }
+      // 恒定时间比较，避免被逐字节试探
+      const a = Buffer.from(input.token);
+      const b = Buffer.from(expected);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "token 不正确" });
+      }
+
+      const fetchedAt = Date.now();
+      let saved = 0;
+      const ignored: string[] = [];
+
+      for (const r of input.readings) {
+        const dorm = await findSongjiangDorm(r.building, r.room);
+        if (!dorm) {
+          ignored.push(`${r.building}-${r.room}`);
+          continue;
+        }
+        if (r.kwh == null) {
+          await insertReading({
+            dormId: Number(dorm.id),
+            elecKwh: null,
+            cardBalance: null,
+            ok: false,
+            errMsg: r.err ?? "查询不到该房间",
+            fetchedAt,
+          });
+        } else {
+          await insertReading({
+            dormId: Number(dorm.id),
+            elecKwh: r.kwh,
+            cardBalance: null, // 松江没有一卡通余额
+            ok: true,
+            errMsg: null,
+            fetchedAt,
+          });
+          saved += 1;
+        }
+      }
+
+      return { ok: true as const, saved, ignored, at: fetchedAt };
+    }),
+
   /* ---------------- 访客统计（仅管理员） ---------------- */
 
   /** 管理员：访问统计（总体 + 时间维度 + 学号名单 + 最近流水） */
@@ -144,6 +251,7 @@ export const monitorRouter = createRouter({
     return rows.map((d) => ({
       id: Number(d.id),
       name: d.name,
+      source: d.source ?? "ykt",
       sysid: d.sysid,
       areaid: d.areaid,
       buildid: d.buildid,
@@ -207,6 +315,8 @@ export const monitorRouter = createRouter({
     .input(
       z.object({
         name: z.string().min(1).max(64),
+        // ykt = 一卡通/浦东电控；songjiang = 松江集中器
+        source: z.enum(["ykt", "songjiang"]).default("ykt"),
         sysid: z.number(),
         areaid: z.number(),
         buildid: z.number(),
@@ -226,8 +336,11 @@ export const monitorRouter = createRouter({
         // 归属绑定到当前登录学号，之后只有本人（和管理员）能看到
         cardUser: ctx.studentId,
       });
-      // 立即抓一轮，让新宿舍马上有数据（绕过手动刷新防抖）
-      void scrapeAll().catch((e) => console.error("[router] addDorm 后抓取失败", e));
+      // 一卡通宿舍立即抓一轮，马上有数据；
+      // 松江宿舍只能等校内采集端下一次推送
+      if ((input.source ?? "ykt") === "ykt") {
+        void scrapeAll().catch((e) => console.error("[router] addDorm 后抓取失败", e));
+      }
       return { ok: true, id: Number(id) };
     }),
 

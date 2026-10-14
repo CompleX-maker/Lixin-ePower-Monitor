@@ -46,7 +46,7 @@ type Settings = {
 };
 
 type DormItem = {
-  id: number; name: string; sysid: number; areaid: number; buildid: number; roomid: string;
+  id: number; name: string; source: string; sysid: number; areaid: number; buildid: number; roomid: string;
   roomLabel: string | null; emailTo: string | null; cardUser: string | null; hasCardPass: boolean;
   cardErr: string | null; createdAt: number;
 };
@@ -194,6 +194,11 @@ export default function Home() {
                 <button className="mr-1.5 flex items-center whitespace-nowrap" onClick={() => setSelDorm(d.id)}>
                   {d.name}
                   {d.roomLabel ? <span className="ml-1 text-xs opacity-70">{d.roomLabel}</span> : null}
+                  {d.source === "songjiang" ? (
+                    <span className="ml-1.5 rounded bg-zinc-700/60 px-1 py-px text-[10px] leading-tight text-zinc-400">
+                      松江
+                    </span>
+                  ) : null}
                   {d.emailTo && <Mail className="ml-1.5 h-3 w-3 opacity-60" />}
                   {d.cardUser && <Wallet className={`ml-1 h-3 w-3 ${d.cardErr ? "text-red-400 opacity-100" : "opacity-60"}`} />}
                 </button>
@@ -286,6 +291,25 @@ export default function Home() {
             </CardContent>
           </Card>
 
+          {dorm?.source === "songjiang" ? (
+            /* 松江是独立电控系统，没有一卡通余额这个概念，别显示「暂无」误导人 */
+            <Card className="border-zinc-800 bg-zinc-900/60">
+              <CardHeader className="pb-1">
+                <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
+                  <Radio className="h-3.5 w-3.5" /> 数据来源
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-zinc-300">松江电控</div>
+                <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                  校内独立电表系统 · 由采集端定时抓取
+                </p>
+                <p className="mt-0.5 text-[11px] text-zinc-600">
+                  电表本身 24 小时才更新一次，和实时电量会有少许出入
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
           <Card className="border-zinc-800 bg-zinc-900/60">
             <CardHeader className="pb-1">
               <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
@@ -304,6 +328,7 @@ export default function Home() {
               </p>
             </CardContent>
           </Card>
+          )}
 
           <Card className="border-zinc-800 bg-zinc-900/60">
             <CardHeader className="pb-1">
@@ -529,6 +554,11 @@ function AddDormDialog({
   const nameTouched = useRef(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // 数据来源：一卡通（浦东）走级联；松江是校园网内的集中器，只要楼号 + 房间号
+  const [source, setSource] = useState<"ykt" | "songjiang">("ykt");
+  const [sjBuilding, setSjBuilding] = useState("2");
+  const [sjRoom, setSjRoom] = useState("");
+
   const num = (s?: string) => (s ? Number(s) : undefined);
   const qBase = { retry: false, refetchOnWindowFocus: false } as const;
   const systemsQ = trpc.monitor.cascade.useQuery({ level: "systems" }, { enabled: open, ...qBase });
@@ -559,6 +589,7 @@ function AddDormDialog({
     setSysId(undefined); setAreaId(undefined); setDistrictId(undefined);
     setBuildId(undefined); setFloorId(undefined); setRoomId(undefined);
     setName(""); setEmailTo(""); nameTouched.current = false; setMsg(null);
+    setSource("ykt"); setSjBuilding("2"); setSjRoom("");
   };
 
   const cascadeError =
@@ -575,9 +606,85 @@ function AddDormDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-zinc-500">
-            按学校电控系统的层级逐级选择。查询走你自己的一卡通账号，能查到的房间都可以加入监测。
-          </p>
+          {/* 数据来源 */}
+          <div className="flex gap-1.5 rounded-lg border border-zinc-800 p-1">
+            {([
+              ["ykt", "一卡通（浦东）"],
+              ["songjiang", "松江电控"],
+            ] as const).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                className={`flex-1 rounded-md px-2 py-1.5 text-xs transition-colors ${
+                  source === k
+                    ? "bg-amber-500 font-medium text-zinc-950"
+                    : "text-zinc-400 hover:bg-zinc-800"
+                }`}
+                onClick={() => { setSource(k); setMsg(null); }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {source === "songjiang" ? (
+            <>
+              <p className="text-xs leading-relaxed text-zinc-500">
+                松江宿舍的电表走校内独立系统，选好楼号、填 4 位房间号就行。
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-zinc-500">楼号</Label>
+                  <Select value={sjBuilding} onValueChange={setSjBuilding}>
+                    <SelectTrigger className="border-zinc-700 bg-zinc-950">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper" sideOffset={4} className="max-h-60">
+                      {Array.from({ length: 18 }, (_, i) => String(i + 1)).map((n) => (
+                        <SelectItem key={n} value={n}>{n} 号楼</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-zinc-500">房间号（4 位）</Label>
+                  <Input
+                    value={sjRoom}
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="如 4019"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                      setSjRoom(v);
+                      if (!nameTouched.current && v.length === 4) {
+                        setName(`${sjBuilding} 号楼 ${v}`);
+                      }
+                    }}
+                    className="border-zinc-700 bg-zinc-950 font-mono"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1 rounded-lg bg-zinc-950/60 p-2.5 text-[11px] leading-relaxed text-zinc-500">
+                <p>
+                  房间号 = <strong className="text-zinc-400">楼层 + 3 位房号</strong>。
+                  例：4 楼 019 室 → 填 <span className="font-mono text-zinc-400">4019</span>
+                </p>
+                <p>
+                  查询码 <span className="font-mono text-amber-400/90">{sjBuilding}{sjRoom || "4019"}</span>
+                  {sjRoom.length === 4 ? " —— 在校园网里打开 " : " —— 会去 "}
+                  <span className="font-mono text-zinc-600">192.168.134.{sjBuilding === "1" ? "111" : sjBuilding}</span>
+                  查这一个房间
+                </p>
+                <p className="text-zinc-600">
+                  数据由校内采集端定时抓取，刚添加时可能还没有数字，等下一轮即可。
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-zinc-500">
+                按学校电控系统的层级逐级选择。查询走你自己的一卡通账号，能查到的房间都可以加入监测。
+              </p>
           <CascadeField label="电控系统" value={sysId} loading={systemsQ.isFetching}
             items={systemsQ.data}
             onChange={(v) => { setSysId(v); setAreaId(undefined); setDistrictId(undefined); setBuildId(undefined); setFloorId(undefined); setRoomId(undefined); }} />
@@ -603,6 +710,8 @@ function AddDormDialog({
                 if (rn) setName(bn ? `${bn} ${rn}` : rn);
               }
             }} />
+            </>
+          )}
           <div className="space-y-1">
             <Label className="text-xs text-zinc-500">备注名（展示用）</Label>
             <Input
@@ -626,15 +735,34 @@ function AddDormDialog({
           )}
           <Button
             className="w-full bg-amber-500 text-zinc-950 hover:bg-amber-400"
-            disabled={!roomId || !name.trim() || addDorm.isPending}
+            disabled={
+              addDorm.isPending ||
+              !name.trim() ||
+              (source === "songjiang" ? sjRoom.length !== 4 : !roomId)
+            }
             onClick={() =>
-              addDorm.mutate({
-                name: name.trim(),
-                sysid: Number(sysId), areaid: Number(areaId),
-                buildid: Number(buildId), roomid: roomId!, // 可能是 "3-1008" 这类字符串
-                roomLabel: roomName,
-                ...(emailTo.trim() ? { emailTo: emailTo.trim() } : {}),
-              })
+              addDorm.mutate(
+                source === "songjiang"
+                  ? {
+                      name: name.trim(),
+                      source: "songjiang" as const,
+                      // 松江不参与一卡通那套级联，这几个字段填 0
+                      sysid: 0,
+                      areaid: 0,
+                      buildid: Number(sjBuilding),
+                      roomid: sjRoom,
+                      roomLabel: `${sjBuilding}-${sjRoom}`,
+                      ...(emailTo.trim() ? { emailTo: emailTo.trim() } : {}),
+                    }
+                  : {
+                      name: name.trim(),
+                      source: "ykt" as const,
+                      sysid: Number(sysId), areaid: Number(areaId),
+                      buildid: Number(buildId), roomid: roomId!, // 可能是 "3-1008" 这类字符串
+                      roomLabel: roomName,
+                      ...(emailTo.trim() ? { emailTo: emailTo.trim() } : {}),
+                    },
+              )
             }
           >
             {addDorm.isPending ? "添加中…" : "加入监测"}

@@ -12,6 +12,13 @@ import {
 // 被监测的宿舍（eleresult 页面参数组合唯一确定一个房间）
 export const dorms = mysqlTable("dorms", {
   id: serial("id").primaryKey(),
+  /**
+   * 数据来源：
+   *   ykt       —— 一卡通/电控系统（浦东），走 ykt.lixin.edu.cn，有剩余电量和一卡通余额
+   *   songjiang —— 松江校区独立电控集中器（http://192.168.134.<楼号>/），
+   *                只有剩余电量，且**只能在校园网内访问**，由校内采集端推进来
+   */
+  source: varchar("source", { length: 16 }).notNull().default("ykt"),
   name: varchar("name", { length: 64 }).notNull(), // 用户备注名，如「我们宿舍」
   sysid: int("sysid").notNull(), // 电控系统：3=中山西路及上川路 4=新苑一二三
   areaid: int("areaid").notNull(), // 校区

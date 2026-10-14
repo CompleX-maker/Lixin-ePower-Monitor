@@ -113,7 +113,10 @@ async function saveReading(res: ScrapeResult, dorm?: DormRow) {
  */
 export async function scrapeAll(): Promise<ScrapeResult[]> {
   await ensureDefaultDorm();
-  const dorms = await listDorms();
+  // ⚠️ 只处理一卡通来源的宿舍。松江宿舍在完全不同的系统里
+  // （校园网内的集中器），数据由校内采集端通过 ingestSongjiang 推进来，
+  // 混进来会拿 sysid/buildid 去 ykt 查，必然失败还会写脏读数。
+  const dorms = (await listDorms()).filter((d) => (d.source ?? "ykt") === "ykt");
   const global = await getCreds();
   const fetchedAt = Date.now();
 
@@ -254,8 +257,10 @@ function shanghaiParts(d = new Date()): { date: string; hm: string } {
 }
 
 async function dormStatsRow(dorm: DormRow, threshold: number, now: number) {
-  const last = await latestReading(dorm.id);
-  const rows7d = await readingsSince(now - 7 * 24 * 3600_000, dorm.id);
+  // 注意传数组：这几个查询是按「可访问的宿舍集合」设计的，
+  // 传单个数字会生成非法的 `in 1`（monitor.ts 里已加归一化兜底）
+  const last = await latestReading([dorm.id]);
+  const rows7d = await readingsSince(now - 7 * 24 * 3600_000, [dorm.id]);
   const cur = last?.ok && last.elecKwh != null ? last.elecKwh : null;
   const st = computeStats(rows7d, cur, now);
   const below = cur != null && cur < threshold;

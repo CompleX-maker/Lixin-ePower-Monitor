@@ -68,6 +68,47 @@ export async function releaseDorm(dormId: number): Promise<void> {
 }
 
 /** 某学号当前名下的宿舍数量（「一个账号只能有一个宿舍」的配额校验用） */
+/** 列出所有松江宿舍，供校内采集端拉取「要去哪些房间抄表」 */
+export async function listSongjiangTargets(): Promise<
+  { building: number; room: string; label: string; name: string }[]
+> {
+  const rows = await getDb()
+    .select({
+      building: dorms.buildid,
+      room: dorms.roomid,
+      label: dorms.roomLabel,
+      name: dorms.name,
+    })
+    .from(dorms)
+    .where(eq(dorms.source, "songjiang"))
+    .orderBy(dorms.buildid, dorms.roomid);
+
+  return rows.map((r) => ({
+    building: Number(r.building),
+    room: String(r.room),
+    label: r.label ?? String(r.room),
+    name: r.name,
+  }));
+}
+
+/**
+ * 按「楼号 + 房间号」找松江宿舍。
+ * 采集端只知道这两个值，不知道数据库主键，所以用它们定位。
+ */
+export async function findSongjiangDorm(
+  building: number,
+  room: string,
+): Promise<DormRow | undefined> {
+  const rows = await getDb()
+    .select()
+    .from(dorms)
+    .where(
+      and(eq(dorms.source, "songjiang"), eq(dorms.buildid, building), eq(dorms.roomid, room)),
+    )
+    .limit(1);
+  return rows[0];
+}
+
 export async function countDormsOf(studentId: string): Promise<number> {
   const rows = await getDb()
     .select({ id: dorms.id })
@@ -86,6 +127,7 @@ export async function dormBelongsTo(dormId: number, studentId: string): Promise<
 
 export async function createDorm(d: {
   name: string;
+  source?: string;
   sysid: number;
   areaid: number;
   buildid: number;
@@ -99,6 +141,7 @@ export async function createDorm(d: {
     .insert(dorms)
     .values({
       ...d,
+      source: d.source ?? "ykt",
       roomid: String(d.roomid),
       roomLabel: d.roomLabel ?? null,
       emailTo: d.emailTo ?? null,
@@ -167,7 +210,23 @@ export async function insertReading(r: {
     .values({ ...r, errMsg: r.errMsg ?? null });
 }
 
-export async function latestReading(dormIds?: number[]): Promise<ReadingRow | undefined> {
+/**
+ * 宿舍过滤条件归一化。
+ *
+ * ⚠️ 这几个函数接受的是**数组**，但调用方很容易顺手传一个数字。
+ * drizzle 的 `inArray(col, 1)` 会生成 `in 1` —— 这是**非法 SQL**，
+ * 运行时才炸（ER_PARSE_ERROR），类型检查如果没跑到也会漏过去。
+ * 所以这里统一收口：数字也接受，自动包成数组。
+ */
+type DormFilter = number | number[] | undefined;
+
+function normalizeDormIds(f: DormFilter): number[] | undefined {
+  if (f == null) return undefined;
+  return Array.isArray(f) ? f : [f];
+}
+
+export async function latestReading(filter?: DormFilter): Promise<ReadingRow | undefined> {
+  const dormIds = normalizeDormIds(filter);
   if (dormIds == null) {
     return getDb().query.readings.findFirst({ orderBy: [desc(readings.fetchedAt)] });
   }
@@ -178,7 +237,8 @@ export async function latestReading(dormIds?: number[]): Promise<ReadingRow | un
   });
 }
 
-export async function readingsSince(sinceMs: number, dormIds?: number[]): Promise<ReadingRow[]> {
+export async function readingsSince(sinceMs: number, filter?: DormFilter): Promise<ReadingRow[]> {
+  const dormIds = normalizeDormIds(filter);
   if (dormIds != null && dormIds.length === 0) return [];
   const cond =
     dormIds == null
@@ -187,7 +247,8 @@ export async function readingsSince(sinceMs: number, dormIds?: number[]): Promis
   return getDb().select().from(readings).where(cond).orderBy(readings.fetchedAt);
 }
 
-export async function recentReadings(limit: number, dormIds?: number[]): Promise<ReadingRow[]> {
+export async function recentReadings(limit: number, filter?: DormFilter): Promise<ReadingRow[]> {
+  const dormIds = normalizeDormIds(filter);
   if (dormIds != null && dormIds.length === 0) return [];
   if (dormIds != null) {
     return getDb()
