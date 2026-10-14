@@ -669,12 +669,6 @@ function AddDormDialog({
                   房间号 = <strong className="text-zinc-400">楼层 + 3 位房号</strong>。
                   例：4 楼 019 室 → 填 <span className="font-mono text-zinc-400">4019</span>
                 </p>
-                <p>
-                  查询码 <span className="font-mono text-amber-400/90">{sjBuilding}{sjRoom || "4019"}</span>
-                  {sjRoom.length === 4 ? " —— 在校园网里打开 " : " —— 会去 "}
-                  <span className="font-mono text-zinc-600">192.168.134.{sjBuilding === "1" ? "111" : sjBuilding}</span>
-                  查这一个房间
-                </p>
                 <p className="text-zinc-600">
                   数据由校内采集端定时抓取，刚添加时可能还没有数字，等下一轮即可。
                 </p>
